@@ -141,12 +141,15 @@ class F1StrategyEngine:
         """
         Simulates the race time delta if a driver had pitted on `target_pit_lap` instead of `actual_pit_lap`.
 
-        Uses the linear degradation slope (s/lap) of the stint the driver was on
-        approaching `actual_pit_lap`, rather than a narrow percentile snapshot —
-        the previous version clipped its estimate to a 0.5s/lap floor, which
-        dominated whenever real degradation was gentle (a common case), making
-        every scenario collapse to a fixed lap_difference * 0.5 regardless of
-        the driver's actual pace trend.
+        Uses a fuel-corrected linear degradation slope (s/lap) for the stint
+        approaching `actual_pit_lap`. Raw lap times include fuel burn and can
+        get quicker even while tyres degrade, which otherwise turns a normal
+        stint into a misleading negative slope.
+
+        This is a clean-air tyre-window estimate, not a full race simulation:
+        traffic, safety cars and a different rejoin gap are deliberately out of
+        scope. `pit_loss_seconds` is reported for context but cancels out of
+        the delta because both scenarios contain exactly one pit stop.
         """
         drv_laps = self.clean_laps[self.clean_laps['Driver'] == driver].sort_values('LapNumber').copy()
         if drv_laps.empty:
@@ -160,23 +163,32 @@ class F1StrategyEngine:
         compound = pre_pit_laps.iloc[-1]['Compound']
         stint_laps = drv_laps[drv_laps['Stint'] == stint]
 
+        fuel_effect_per_lap = 0.035
+        lower_bound, upper_bound = 0.02, 0.30
+
         if len(stint_laps) >= 4:
             x = stint_laps['LapNumber'].values
-            y = stint_laps['LapTimeSeconds'].values
-            slope, _ = np.polyfit(x, y, 1)
-            tyre_delta_per_lap = float(np.clip(slope, 0.02, 3.0))
-            method = "stint degradation slope"
+            y = stint_laps['LapTimeSeconds'].values + (x * fuel_effect_per_lap)
+            raw_tyres_slope, _ = np.polyfit(x, y, 1)
+            method = "fuel-corrected stint degradation slope"
         else:
             # Not enough laps on this stint for a reliable regression — fall back
-            # to the percentile-window estimate, with a much lower floor so it
-            # can't silently dominate the result the way 0.5 did.
+            # to a fuel-corrected percentile window. This is less reliable, so
+            # expose the raw value and whether the guardrail was applied below.
             start_lap = min(actual_pit_lap, target_pit_lap) - 1
             end_lap = max(actual_pit_lap, target_pit_lap) + 2
             window_laps = drv_laps[(drv_laps['LapNumber'] >= start_lap) & (drv_laps['LapNumber'] <= end_lap)]
-            fresh = np.percentile(window_laps['LapTimeSeconds'], 20)
-            degraded = np.percentile(window_laps['LapTimeSeconds'], 80)
-            tyre_delta_per_lap = float(np.clip(degraded - fresh, 0.02, 3.0))
-            method = "percentile window (short stint fallback)"
+            corrected_times = window_laps['LapTimeSeconds'] + (window_laps['LapNumber'] * fuel_effect_per_lap)
+            fresh = np.percentile(corrected_times, 20)
+            degraded = np.percentile(corrected_times, 80)
+            raw_tyres_slope = float(degraded - fresh)
+            method = "fuel-corrected percentile window (short stint fallback)"
+
+        # Typical race-stint degradation is roughly 0.02–0.15 s/lap. 0.30 is
+        # intentionally a generous ceiling for high-degradation tracks; unlike
+        # the old 3.0 ceiling, it prevents a residual anomaly from dominating.
+        tyre_delta_per_lap = float(np.clip(raw_tyres_slope, lower_bound, upper_bound))
+        slope_was_clipped = not np.isclose(raw_tyres_slope, tyre_delta_per_lap)
 
         lap_difference = actual_pit_lap - target_pit_lap
         estimated_gain = lap_difference * tyre_delta_per_lap
@@ -189,8 +201,12 @@ class F1StrategyEngine:
             'LapDifference': lap_difference,
             'Compound': compound,
             'Method': method,
+            'RawTyreDeltaPerLap_s': float(round(raw_tyres_slope, 3)),
             'EstimatedTyreDeltaPerLap_s': float(round(tyre_delta_per_lap, 3)),
+            'TyreDeltaWasClipped': slope_was_clipped,
             'EstimatedTimeDelta_s': float(round(estimated_gain, 3)),
+            # Same pit loss in both one-stop scenarios: +pit_loss - pit_loss = 0.
+            # It would need a traffic/rejoin model before changing this delta.
             'PitLossBaseline_s': float(pit_loss_seconds)
         }
 

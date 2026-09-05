@@ -201,23 +201,29 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 .pw-table .muted { color: var(--text-muted); }
 .pw-table-wrap { overflow-x: auto; width: 100%; }
 
-/* ---- Selectbox dropdown popup (BaseWeb portal) ----
-   This popup is not inside our dark containers and keeps its own light
-   background by default. The global `div, span, p, label { color: white }`
-   rule above made its option text white-on-white — fixing by darkening the
-   popup itself rather than loosening that rule. */
+/* ---- Selectbox dropdown popup (portal rendered outside the sidebar) ----
+   Streamlit 1.63 uses div[role=listbox] / div[role=option], not BaseWeb's
+   former ul/li structure. Target both shapes so the popup stays dark through
+   Streamlit upgrades, including its otherwise-white wrapper. */
+div[data-baseweb="popover"],
+div:has(> div[role="listbox"]),
+div[role="listbox"],
 div[data-baseweb="popover"] ul,
-div[data-baseweb="popover"] li,
 ul[role="listbox"] {
     background-color: var(--bg-panel) !important;
     border-color: var(--border) !important;
 }
-li[role="option"] {
+div[role="listbox"] > div,
+div[role="listbox"] div[role="presentation"],
+li[role="option"],
+div[role="option"] {
     background-color: var(--bg-panel) !important;
     color: var(--text-primary) !important;
 }
 li[role="option"]:hover,
-li[aria-selected="true"] {
+div[role="option"]:hover,
+li[aria-selected="true"],
+div[role="option"][aria-selected="true"] {
     background-color: var(--bg-panel-alt) !important;
 }
 </style>

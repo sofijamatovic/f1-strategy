@@ -1,7 +1,5 @@
 import unittest
-
 import pandas as pd
-
 from main import F1StrategyEngine
 
 
@@ -24,7 +22,6 @@ class PitWindowMathTests(unittest.TestCase):
         result = self._engine_with_laps().simulate_what_if_pit(
             "TST", actual_pit_lap=16, target_pit_lap=13, pit_loss_seconds=24.0
         )
-
         self.assertEqual(result["ScenarioType"], "Undercut")
         self.assertAlmostEqual(result["EstimatedTyreDeltaPerLap_s"], 0.030, places=3)
         self.assertAlmostEqual(result["EstimatedTimeDelta_s"], 0.090, places=3)
